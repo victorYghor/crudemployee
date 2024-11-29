@@ -1,54 +1,106 @@
-from django.http import JsonResponse
-from django.shortcuts import render, get_object_or_404
-from rest_framework import viewsets, status, views
-from rest_framework.decorators import action
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework import viewsets, status
 from rest_framework.response import Response
-
-from employee.models import Employee
-from employee.serializers import UserSerializer
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
+from django.shortcuts import get_object_or_404
+from .models import Employee, Department
+from .serializers import EmployeeSerializer, EmployeeCreateSerializer
 
 
 class EmployeeViewSet(viewsets.ViewSet):
-    def retrive(self):
-        return JsonResponse(data="works", status=200)
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
 
-class AuthViewSet(views.APIView):
-    @action(detail=False, methods=["post"], url_name="set-password", url_path="set_password")
-    def set_password(self, request):
+    def list(self, request):
         """
-        Permite definir ou redefinir a senha do usuário usando o token de email, para quando o usuário esquecer
-        a senha ou quando for o seu primeiro acesso.
+        List employees.
         """
-        email_token = request.data.get("email_token")
-        password = request.data.get("password")
+        user = request.user
 
-        if not email_token or not password:
-            return Response({"error": "email_token and password are required."}, status=status.HTTP_400_BAD_REQUEST)
+        if user.is_superuser:
+            employees = Employee.objects.all()
+        elif user.is_manager:
+            employees = Employee.objects.filter(department=user.department)
+        else:
+            raise PermissionDenied("You are not authorized to view employee profiles.")
 
-        user = get_object_or_404(Employee, email_token=email_token)
-        user.set_password(password)
-        # Faz que não seja mais possível usar aquele token depois de ter modificado a senha.
-        user.email_token = None
-        user.save()
-        return Response({"message": "Password set successfully."}, status=status.HTTP_200_OK)
+        search_param = request.query_params.get("search", None)
+        if search_param:
+            employees = employees.filter(
+                first_name__icontains=search_param
+            ) | employees.filter(
+                last_name__icontains=search_param
+            ) | employees.filter(
+                email__icontains=search_param
+            ) | employees.filter(
+                department__name__contains=search_param
+            )
 
-    def get(self, request):
-        return Response(status=200)
+        serializer = EmployeeSerializer(employees, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
-    def post(self, request):
+    def retrieve(self, request, *args, **kwargs):
         """
-        Autentica o usuário e retorna um token JWT.
+        Get a specific employee.
         """
-        email = request.data.get("email")
-        password = request.data.get("password")
+        user = request.user
+        employee_id = kwargs.get("pk")
+        employee = get_object_or_404(Employee, id=employee_id)
 
-        if not email or not password:
-            return Response({"error": "Email and password are required."}, status=status.HTTP_400_BAD_REQUEST)
+        if user.is_superuser or (user.is_manager and employee.department == user.department):
+            serializer = EmployeeSerializer(employee)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        raise PermissionDenied("You are not authorized to view this employee.")
 
-        user = get_object_or_404(Employee, email=email)
-        if not user.check_password(password):
-            return Response({"error": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
+    def create(self, request):
+        """
+        Create a new employee.
+        """
+        user = request.user
+        if not (user.is_superuser or user.is_manager):
+            raise PermissionDenied("You are not authorized to create an employee.")
 
-        token = user.generate_jwt_token()
-        res = UserSerializer(user).data | {"token": token}
-        return Response(res, status=status.HTTP_200_OK)
+        data = request.data
+        serializer = EmployeeCreateSerializer(data=data)
+        serializer.is_valid(raise_exception=True)
+
+        if user.is_manager and serializer.validated_data.get("department") != user.department:
+            raise PermissionDenied("Managers can only create employees in their own department.")
+
+
+        employee = serializer.save()
+        return Response(EmployeeSerializer(employee).data, status=status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        """
+        Update an existing employee.
+        """
+        user = request.user
+        employee_id = kwargs.get("pk")
+        employee = get_object_or_404(Employee, id=employee_id)
+
+        if not (user.is_superuser or (user.is_manager and employee.department == user.department)):
+            raise PermissionDenied("You are not authorized to update this employee.")
+        data = request.data
+        serializer = EmployeeCreateSerializer(employee, data=data, partial=True)
+        serializer.is_valid(raise_exception=True)
+
+        serializer.save()
+        return Response(EmployeeSerializer(employee).data, status=status.HTTP_200_OK)
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete an employee.
+        """
+        user = request.user
+        employee_id = kwargs.get("pk")
+        employee = get_object_or_404(Employee, id=employee_id)
+
+        if not (user.is_superuser or (user.is_manager and employee.department == user.department)):
+            raise PermissionDenied("You are not authorized to delete this employee.")
+
+        employee.delete()
+        return Response({"detail": "Employee deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
+
+

@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'employee'
 ]
+AUTH_USER_MODEL = 'employee.Employee'
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',

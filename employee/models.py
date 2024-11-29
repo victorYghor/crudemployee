@@ -4,15 +4,19 @@ from django.conf import settings
 from django.contrib.auth.hashers import make_password, check_password
 from django.db import models
 from django.contrib.auth.models import AbstractUser
+from rest_framework.exceptions import ValidationError
+
 
 class Department(models.Model):
     name=models.CharField(max_length=100, null=False, blank=False, unique=True)
 
+    def __str__(self):
+        return self.name
     class Meta:
         db_table = "department"
 
 class Employee(AbstractUser):
-    name = models.CharField(max_length=255, null=False, blank=False)
+    username = models.CharField(max_length=255, null=False, blank=False)
     last_name = models.CharField(max_length=255, null=False, blank=False)
     is_superuser = models.BooleanField(null=False, blank=False, default=False)
     is_manager = models.BooleanField(null=False, blank=False, default=False)
@@ -24,11 +28,9 @@ class Employee(AbstractUser):
         null=True,
         blank=True,
     )
-    email_token = models.CharField(max_length=200, null=True, blank=True)
 
     USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = ['name']
-
+    REQUIRED_FIELDS = ['username']
     class Meta:
-        unique_together = (("name", "last_name", "email"),)
+        unique_together = (("username", "last_name", "email"),)
         db_table = "employee"
